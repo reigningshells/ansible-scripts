@@ -4,6 +4,10 @@ Simple playbook to update Ubuntu to the latest release and install Guacamole.  U
 
 When running the playbook completes, you will be able to access Guacamole at https://your.site.com/access/
 
-Note: Before using, update hosts file and files/user-mappings.xml
+## Note 
+
+Before using, update hosts file and files/user-mapping.xml
+
+## Execute
 
 ansible-playbook --private-key /path/to/privatekey install_guac.yml
