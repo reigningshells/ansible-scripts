@@ -1,0 +1,246 @@
+--- # Playbook for updating and upgrading Ubuntu servers then installing necessary packages
+- name: Update Ubuntu and Install Required Packages
+  hosts: guac_servers
+  gather_facts: yes
+  become: yes
+  become_method: sudo
+  become_user: root
+
+  tasks:
+
+    - name: 'This server is running an older version of Ubuntu and will be upgraded to the latest release'
+      block:
+
+        - name: Update apt repo and cache
+          apt: 
+            update_cache: yes 
+            force_apt_get: yes 
+            cache_valid_time: 3600
+
+        - name: Upgrade all packages to prepare for release upgrade
+          apt:
+            upgrade: dist
+            force_apt_get: yes
+
+        - name: Checking if a reboot is needed
+          register: reboot_required_file
+          stat: 
+            path: /var/run/reboot-required
+            get_md5: no
+
+        - name: Rebooting after packages have been updated
+          reboot:
+            post_reboot_delay: 60
+          when: reboot_required_file.stat.exists
+
+        - name: Run do-release-upgrade
+          shell: 
+            cmd: do-release-upgrade -f DistUpgradeViewNonInteractive -q
+
+        - name: Checking if a reboot is needed
+          register: reboot_required_file
+          stat: 
+            path: /var/run/reboot-required
+            get_md5: no
+
+        - name: Reboot after release upgrade
+          reboot:
+            post_reboot_delay: 60
+
+      when:
+        - ansible_distribution == 'Ubuntu'
+        - ansible_distribution_major_version != '20'
+
+    - name: Full upgrade
+      apt:
+        update_cache: yes
+        upgrade: full
+
+    - name: Install required packages
+      apt:
+        name: ['gcc', 'vim', 'curl', 'wget', 'g++', 'libcairo2-dev', 'libjpeg-turbo8-dev', 'libpng-dev', 'libtool-bin', 'libossp-uuid-dev', 'libavcodec-dev', 'libavutil-dev', 'libswscale-dev', 'build-essential', 'libpango1.0-dev', 'libssh2-1-dev', 'libvncserver-dev', 'libtelnet-dev', 'libssl-dev', 'libvorbis-dev', 'libwebp-dev', 'freerdp2-dev', 'freerdp2-x11', 'openjdk-11-jdk', 'apache2']
+        state: latest
+
+    - name: Add Tomcat user
+      user:
+        name: tomcat
+        create_home: no
+        home: /opt/tomcat
+        shell: /bin/false
+
+    - name: Delete /opt/tomcat directory if it exists
+      file:
+        path: /opt/tomcat
+        state: absent
+      failed_when: false
+
+    - name: Create /opt/tomcat directory
+      file:
+        path: /opt/tomcat
+        state: directory
+        mode: '0755'
+
+    - name: Download and expand Tomcat tar
+      unarchive:
+        src: https://downloads.apache.org/tomcat/tomcat-9/v9.0.52/bin/apache-tomcat-9.0.52.tar.gz
+        dest: /opt/tomcat
+        remote_src: yes
+
+    - name: Move /opt/tomcat/apache-tomcat-9.0.52 to /opt/tomcat/tomcatapp
+      shell:
+        cmd: mv /opt/tomcat/apache-tomcat-9.0.52 /opt/tomcat/tomcatapp
+
+    - name: Set tomcat as owner of /opt/tomcat recursively
+      file:
+        path: /opt/tomcat
+        state: directory
+        owner: tomcat
+        group: tomcat
+        recurse: yes
+
+    - name: Make all shell scripts in /opt/tomcat/tomcatapp/bin directory executable
+      shell:
+        cmd: chmod +x /opt/tomcat/tomcatapp/bin/*.sh
+        warn: false
+
+    - name: Change Tomcat to bind to localhost
+      replace:
+        path: /opt/tomcat/tomcatapp/conf/server.xml
+        regexp: 'Connector port=\"8080\"'
+        replace: 'Connector port="8080" address="127.0.0.1"'
+
+    - name: Copy local file tomcat.service to /etc/systemd/system/tomcat.service
+      copy:
+        src: ./files/tomcat.service
+        dest: /etc/systemd/system/tomcat.service
+
+    - name: Reload the daemon so that systemd daemon will read the new service
+      systemd:
+        daemon_reload: yes
+
+    - name: Start and enable the Tomcat service
+      systemd:
+        name: tomcat
+        enabled: yes
+        state: started
+
+    - name: Delete /opt/guacamole directory if it exists
+      file:
+        path: /opt/guacamole
+        state: absent
+      failed_when: false
+
+    - name: Create /opt/guacamole directory
+      file:
+        path: /opt/guacamole
+        state: directory
+        mode: '0755'
+
+    - name: Download and expand Guacamole tar
+      unarchive:
+        src: https://downloads.apache.org/guacamole/1.3.0/source/guacamole-server-1.3.0.tar.gz
+        dest: /opt/guacamole
+        remote_src: yes
+
+    - name: Executing the Guacamole configure script
+      shell:
+        cmd: ./configure --with-init-dir=/etc/init.d
+        chdir: /opt/guacamole/guacamole-server-1.3.0
+
+    - name: Make and install Guacamole
+      shell:
+        cmd: make && make install
+        chdir: /opt/guacamole/guacamole-server-1.3.0
+
+    - name: Running ldconfig to create the necessary links and cache to the most recent shared libraries found in the guacamole server directory
+      shell:
+        cmd: ldconfig
+        chdir: /opt/guacamole/guacamole-server-1.3.0
+
+    - name: Reload the daemon so that systemd daemon will read the new service
+      systemd:
+        daemon_reload: yes
+
+    - name: Start and enable the Guacamole service
+      systemd:
+        name: guacd
+        enabled: yes
+        state: started
+
+    - name: Create /etc/guacamole directory
+      file:
+        path: /etc/guacamole/
+        state: directory
+
+    - name: Download Guacamole client
+      get_url:
+        url: https://downloads.apache.org/guacamole/1.3.0/binary/guacamole-1.3.0.war
+        dest: /etc/guacamole/guacamole.war
+
+    - name: Create symlink for Guacamole in /opt/tomcat/tomcatapp/webapps
+      file:
+        src: /etc/guacamole/guacamole.war
+        dest: /opt/tomcat/tomcatapp/webapps/guacamole.war
+        state: link
+
+    - name: Create environment variables for Guacamole in /etc/default/tomcat
+      shell:
+        cmd: echo "GUACAMOLE_HOME=/etc/guacamole" > /etc/default/tomcat
+
+    - name: Copy local file guacamole.properties to /etc/guacamole/guacamole.properties
+      copy:
+        src: ./files/guacamole.properties
+        dest: /etc/guacamole/guacamole.properties
+
+    - name: Create symlink for /etc/guacamole at /opt/tomcat/tomcatapp/.guacamole
+      file:
+         src: /etc/guacamole
+         dest: /opt/tomcat/tomcatapp/.guacamole
+         state: link
+
+    - name: Copy local file user-mapping.xml to /etc/guacamole/user-mapping.xml
+      copy:
+        src: ./files/user-mapping.xml
+        dest: /etc/guacamole/user-mapping.xml
+
+    - name: Restart guacd and tomcat
+      systemd:
+        name: '{{ item }}'
+        state: restarted
+      with_items:
+        - tomcat
+        - guacd
+
+    - name: Enable Apache2 modules
+      apache2_module:
+        name: '{{ item }}'
+        state: present
+      with_items:
+        - proxy
+        - proxy_http
+        - ssl
+
+    - name: Disable default Apache2 site
+      shell:
+        cmd: a2dissite 000-default.conf
+
+    - name: Disable HTTP (HTTPS Only)
+      replace:
+        path: /etc/apache2/ports.conf
+        regexp: '^Listen 80'
+        replace: '#Listen 80'
+
+    - name: Copy local file guacamole_ssl.conf to /etc/apache2/sites-available/guacamole_ssl.conf
+      copy:
+        src: ./files/guacamole_ssl.conf
+        dest: /etc/apache2/sites-available/guacamole_ssl.conf
+
+    - name: Enable HTTPS site for reverse proxy to Guacamole
+      shell:
+        cmd: a2ensite guacamole_ssl
+
+    - name: Restart apache2
+      systemd:
+        name: apache2
+        enabled: yes
+        state: restarted

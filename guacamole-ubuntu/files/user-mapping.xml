@@ -1,0 +1,28 @@
+<user-mapping>
+
+    <!-- Per-user authentication and config information -->
+
+    <authorize 
+        username="<username>"
+        password="<md5 hash of password>"
+        encoding="md5">
+
+        <connection name="Local SSH Test">
+            <protocol>ssh</protocol>
+            <param name="hostname">127.0.0.1</param>
+            <param name="port">22</param>
+        </connection>
+
+	<connection name="RDP Example">
+	    <protocol>rdp</protocol>
+            <param name="hostname">some.target.com</param>
+            <param name="port">3389</param>
+	    <param name="username">username</param>
+            <param name="password">password</param>
+            <param name="security">nla</param>
+            <param name="ignore-cert">true</param>
+        </connection>
+
+    </authorize>
+
+</user-mapping>

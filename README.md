@@ -1,2 +1,2 @@
 # ansible-scripts
-Repo fo ansible scripts
+Repo for ansible scripts
